@@ -58,70 +58,329 @@ class AIJobDescriptionGenerator:
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
-    def _get_experience_level(self, years: float) -> str:
-        if years <= 2:
-            return "Entry"
-        elif years <= 7:
-            return "Mid"
-        else:
+    def _get_experience_level(self, years: float, job_title: str = "") -> str:
+        prompt = f"""
+You are an expert HR professional, career strategist, and workforce analyst 
+with global expertise in professional hierarchies across industries. 
+Your task is to classify the correct professional **experience level** 
+based on years of experience and job title context.
+
+### Input
+Years of Experience: {years}
+Job Title: "{job_title}"
+
+---
+
+### Analysis Framework
+
+1. **Primary Criteria**
+   - Use **years of experience** as a baseline indicator.
+   - Adjust for **industry norms** and **career progression speed**:
+     - Technology: accelerated progression; Senior possible after ~5–7 years.
+     - Healthcare: longer timelines; Senior roles often require 10+ years & certifications.
+     - Consulting: clear progression ladder (Analyst → Associate → Manager → Principal → Partner).
+     - Academia: formal path (Assistant → Associate → Full Professor).
+     - Corporate/Finance: managerial levels usually require more years.
+     - Startups: titles may inflate, but still classify realistically.
+
+2. **Job Title Context**
+   - Titles with explicit seniority markers override years when appropriate:
+     - "Intern", "Trainee", "Assistant", "Junior" → Early career levels regardless of years.
+     - "Senior", "Lead", "Principal" → Elevated experience level.
+     - "Manager", "Director", "Head of", "Vice President (VP)" → Executive ladder roles.
+     - "Chief", "C-Level", "CEO/CTO/CFO/COO" → Top executive leadership.
+   - Neutral roles like "Analyst" or "Specialist" depend more on years.
+
+3. **Experience Level Classifications (Universal Set)**
+   - **Entry Level** → Internships, trainees, < 1 year experience, early-career generalists.
+   - **Junior** → 1–3 years, developing professional, growing autonomy.
+   - **Mid-Level** → 3–7 years, competent, independent, some leadership/mentorship.
+   - **Senior** → 7–12 years or explicit "Senior" title, advanced expertise, leads projects.
+   - **Lead** → Technical/functional lead, expert authority, small team leadership.
+   - **Principal** → Highly senior specialist or strategic leader, organization-wide impact.
+   - **Manager/Director** → People management, operational or departmental leadership.
+   - **Executive** → VP-level, Head of Function, broad strategic responsibility.
+   - **C-Level** → Chief Officer titles, corporate-wide leadership, board-level strategy.
+
+4. **Conflict Resolution (Years vs. Title)**
+   - If years appear low but title suggests seniority:
+     - Assume the **title context dominates** (e.g., "Senior Data Engineer" with 2 years should classify as "Senior").
+   - If years are high but title is generic:
+     - Default to a logically higher level (e.g., 15 years as just "Analyst" → at least "Senior").
+
+---
+
+### Output Instructions:
+- Return **ONLY** the single most accurate career level term.
+- Use exact classifications (no explanations): 
+  "Entry Level", "Junior", "Mid-Level", "Senior", "Lead", "Principal", "Manager", "Director", "Executive", "C-Level".
+- Do not output multiple options or add qualifiers like "Level".
+
+### Examples
+- 0.5 years, "Software Engineer" → Entry Level
+- 2 years, "Junior Developer" → Junior
+- 5 years, "Data Scientist" → Mid-Level
+- 8 years, "Senior Analyst" → Senior
+- 12 years, "Engineering Manager" → Manager
+- 18 years, "Director of Finance" → Director
+- 20 years, "Chief Technology Officer" → C-Level
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert HR professional and career strategist. Always return the single best professional experience level classification that matches the role and years of experience according to global standards."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                max_tokens=50
+            )
+            
+            level = response.choices[0].message.content.strip()
+            
+            valid_levels = {
+                "Entry Level", "Junior", "Mid-Level", "Senior",
+                "Lead", "Principal", "Manager", "Director",
+                "Executive", "C-Level"
+            }
+            
+            if any(valid in level for valid in valid_levels):
+                return level
+            else:
+                return self._fallback_experience_level(years)
+                
+        except Exception as e:
+            print(f"Error inferring experience level with AI: {e}")
+            return self._fallback_experience_level(years)
+
+    def _fallback_experience_level(self, years: float, job_title: str = "") -> str:
+        title_lower = job_title.lower()
+
+        if any(keyword in title_lower for keyword in ["intern", "trainee", "apprentice"]):
+            return "Entry Level"
+        if any(keyword in title_lower for keyword in ["junior", "assistant", "associate"]):
+            return "Junior"
+        if any(keyword in title_lower for keyword in ["senior", "sr."]):
             return "Senior"
+        if any(keyword in title_lower for keyword in ["lead", "head", "principal"]):
+            return "Lead" if "principal" not in title_lower else "Principal"
+        if any(keyword in title_lower for keyword in ["manager"]):
+            return "Manager"
+        if any(keyword in title_lower for keyword in ["director"]):
+            return "Director"
+        if any(keyword in title_lower for keyword in ["vp", "vice president"]):
+            return "Executive"
+        if any(keyword in title_lower for keyword in ["chief", "cfo", "ceo", "coo", "cto", "cio", "cmo", "c-level"]):
+            return "C-Level"
+
+        if years < 1:
+            return "Entry Level"
+        elif years < 3:
+            return "Junior"
+        elif years < 7:
+            return "Mid-Level"
+        elif years < 12:
+            return "Senior"
+        elif years < 18:
+            return "Manager"
+        elif years < 25:
+            return "Director"
+        else:
+            return "Executive"
 
     def _infer_industry(self, job_title: str) -> str:
+        prompt = f"""
+You are an expert industry analyst with deep knowledge of global business sectors, 
+emerging markets, and professional classification systems. Your task is to determine 
+the most precise and professional industry classification for the given job title.
+
+Job Title: "{job_title}"
+
+### Analysis Guidelines:
+1. **Contextual Understanding**
+   - Carefully analyze the title for domain context (e.g., "Software Engineer" → Technology, not just Engineering in general).
+   - Consider both primary function (core responsibilities implied) and domain relevance (the business or market where the job most likely exists).
+   - Account for modern and emerging industries (e.g., FinTech, EdTech, HealthTech, E-commerce, AI/ML, Cybersecurity).
+
+2. **Industry Identification**
+   - Assign the job title to a clear, specific industry sector.
+   - Use **recognizable and standardized industry terminology** as found in:
+     - Professional job boards (LinkedIn, Indeed, Glassdoor)
+     - Business and government classification systems (e.g., NAICS, ISIC, GICS, O*NET)
+     - Industry reports and global workforce trends
+
+3. **Specificity Requirement**
+   - Be precise rather than generic:
+     - Use "Financial Technology (FinTech)" instead of "Technology"
+     - Use "Pharmaceuticals & Biotechnology" instead of just "Healthcare"
+     - Use "E-commerce & Online Retail" instead of simply "Retail"
+     - Use "Digital Media & Entertainment" instead of "Media"
+
+4. **Dominant Industry**
+   - If the role spans multiple industries, **select the dominant/primary industry** where the job most commonly exists.
+
+5. **Output Rules**
+   - Output ONLY the **industry name** (e.g., "Technology & Software Development" or "Financial Services & Banking")
+   - Do NOT provide explanations, reasoning, or additional commentary.
+   - Do NOT output multiple industries or options — just the single best classification.
+
+### Examples of Good Classifications:
+- "Technology & Software Development"
+- "Financial Services & Banking"
+- "Pharmaceuticals & Biotechnology"
+- "E-commerce & Online Retail"
+- "Digital Marketing & Advertising"
+- "Energy & Renewable Utilities"
+- "Transportation, Logistics & Supply Chain"
+- "Consulting & Professional Services"
+- "Aerospace & Defense"
+- "Education & EdTech"
+- "Legal & Compliance Services"
+- "Manufacturing & Industrial Engineering"
+
+Now return only the best fitting industry classification for the provided job title.
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert AI trained to classify job titles into precise industries using globally recognized business and workforce classification standards. Always output the single most specific, professional industry name."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=50
+            )
+            
+            industry = response.choices[0].message.content.strip()
+            
+            if industry and len(industry) > 2 and len(industry) < 100:
+                return industry
+            else:
+                return self._fallback_industry_inference(job_title)
+                
+        except Exception as e:
+            print(f"Error inferring industry with AI: {e}")
+            return self._fallback_industry_inference(job_title)
+
+    def _fallback_industry_inference(self, job_title: str) -> str:
         title_lower = job_title.lower()
+
         industry_keywords = {
-            "Technology": ["software", "developer", "engineer", "it", "ai", "ml", "data", "devops", "architect", "cyber", "cloud", "qa", "web", "systems"],
-            "Marketing & Advertising": ["marketing", "brand", "campaign", "content", "digital", "seo", "sem", "social media", "advertising", "copywriter"],
-            "Financial Services": ["finance", "accounting", "analyst", "banking", "investment", "treasury", "audit"],
-            "Healthcare": ["doctor", "nurse", "medical", "health", "clinical", "pharma", "hospital", "physician", "dentist", "therapist"],
-            "Education": ["teacher", "professor", "education", "instructor", "curriculum", "lecturer", "tutor"],
-            "Business": ["analyst", "manager", "consultant", "operations", "business", "executive", "administrator"],
-            "Creative & Design": ["designer", "creative", "artist", "illustrator", "ux", "ui", "graphic", "videographer", "photographer"],
-            "Government & Public Service": ["civil", "public", "policy", "government", "ambassador", "officer", "regulatory"],
-            "Trades & Manufacturing": ["technician", "mechanic", "electrician", "welder", "craftsman", "plumber", "manufacturing", "production"],
-            "Legal": ["lawyer", "attorney", "legal", "paralegal", "solicitor", "judge", "compliance"],
-            "Retail & Hospitality": ["sales", "associate", "store", "retail", "hospitality", "waiter", "chef", "hotel", "restaurant"]
+            "Technology & Software Development": [
+                "software", "developer", "engineer", "programmer", "it", "coding",
+                "devops", "architect", "qa", "web", "full stack", "backend", "frontend", "cloud"
+            ],
+            "Artificial Intelligence & Machine Learning": [
+                "ai", "artificial intelligence", "ml", "machine learning", "nlp",
+                "deep learning", "cv", "computer vision", "data scientist", "data science"
+            ],
+            "Cybersecurity & Information Security": [
+                "cybersecurity", "infosec", "security analyst", "penetration tester", 
+                "ethical hacker", "cryptography", "network security"
+            ],
+            "Data Analytics & Business Intelligence": [
+                "data analyst", "data engineer", "bi", "business intelligence", "analytics"
+            ],
+            "Financial Services & Banking": [
+                "finance", "bank", "investment", "accounting", "auditor",
+                "analyst", "treasury", "audit", "equity", "loan", "credit", "wealth"
+            ],
+            "Financial Technology (FinTech)": [
+                "fintech", "blockchain", "crypto", "defi", "digital payments",
+                "mobile banking", "trading platform"
+            ],
+            "Healthcare & Medical Services": [
+                "doctor", "nurse", "clinician", "hospital", "medical", "healthcare",
+                "therapist", "physician", "dentist", "surgeon"
+            ],
+            "Pharmaceuticals & Biotechnology": [
+                "biotech", "pharmaceutical", "drug", "clinical trials", "genomics", "molecular"
+            ],
+            "Education & Training": [
+                "teacher", "professor", "lecturer", "instructor", "tutor",
+                "education", "curriculum", "school", "learning", "academic"
+            ],
+            "Education Technology (EdTech)": [
+                "edtech", "learning platform", "e-learning", "online courses",
+                "education technology", "mooc"
+            ],
+            "Green Technology & Renewable Energy": [
+                "renewable", "solar", "wind", "sustainability", "green energy",
+                "climate", "environmental", "clean tech", "carbon", "energy transition"
+            ],
+            "Energy, Oil & Utilities": [
+                "petroleum", "oil", "gas", "utilities", "hydropower", "nuclear"
+            ],
+            "Manufacturing & Industrial Engineering": [
+                "production", "manufacturing", "assembly", "automation", "mechanical",
+                "industrial", "plant", "maintenance", "technician", "fabricator"
+            ],
+            "Transportation, Logistics & Supply Chain": [
+                "logistics", "supply chain", "transport", "delivery", "fleet",
+                "shipping", "driver", "freight", "warehousing"
+            ],
+            "Retail, E-commerce & Consumer Goods": [
+                "retail", "store", "sales", "associate", "merchandise", "e-commerce",
+                "shopping", "customer support", "buyer", "shop manager"
+            ],
+            "Hospitality, Travel & Tourism": [
+                "hotel", "hospitality", "restaurant", "chef", "catering",
+                "travel", "tourism", "resort", "concierge", "bartender", "waiter"
+            ],
+            "Digital Marketing & Advertising": [
+                "marketing", "seo", "sem", "social media", "advertising", "growth",
+                "content", "campaign", "influencer", "branding", "performance marketing"
+            ],
+            "Creative, Design & Multimedia": [
+                "designer", "graphic", "illustrator", "ux", "ui", "creative",
+                "animator", "video editor", "photographer", "visual artist"
+            ],
+            "Media, Journalism & Entertainment": [
+                "journalist", "reporter", "media", "broadcaster", "radio",
+                "television", "producer", "actor", "film", "music", "entertainment"
+            ],
+            "Real Estate & Property": [
+                "realtor", "broker", "real estate", "property", "leasing", "valuation"
+            ],
+            "Legal & Compliance Services": [
+                "attorney", "lawyer", "legal", "solicitor", "paralegal",
+                "judge", "compliance", "contracts", "regulatory"
+            ],
+            "Government, Policy & Public Administration": [
+                "civil service", "government", "ambassador", "public sector", "policy",
+                "municipal", "federal", "state", "regulatory officer"
+            ],
+            "Consulting & Professional Services": [
+                "consultant", "strategy", "operations", "management",
+                "executive", "advisor", "business consultant", "corporate strategy"
+            ],
+            "Non-Profit & Social Impact": [
+                "non-profit", "charity", "ngo", "foundation", "volunteer",
+                "community", "humanitarian", "social worker"
+            ],
+            "Aerospace & Defense": [
+                "aerospace", "defense", "pilot", "aviation", "army", "airforce",
+                "military", "naval", "space", "satellite"
+            ],
+            "Agriculture, Food & Farming": [
+                "farmer", "agriculture", "horticulture", "crop", "food processing",
+                "fisheries", "livestock"
+            ]
         }
+
         for industry, keywords in industry_keywords.items():
             if any(kw in title_lower for kw in keywords):
                 return industry
-        return "General"
 
-    def _generate_default_skills(self, job_title: str, experience_level: str) -> List[str]:
-        entry_skills = [
-            "Communication", "Problem Solving", "Learning Agility", "Adaptability", "Teamwork", "Reliability"
-        ]
-        mid_skills = [
-            "Project Management", "Collaboration", "Critical Thinking", "Organization", "Detail Orientation", "Time Management", "Analytical Thinking"
-        ]
-        senior_skills = [
-            "Strategic Leadership", "Mentoring", "Innovation", "Decision Making", "Negotiation", "Vision Setting"
-        ]
-        title_lower = job_title.lower()
-        tech_skills = ["Programming", "Version Control", "Software Development", "Testing", "Code Review"]
-        business_skills = ["Business Analysis", "Financial Literacy", "Operations Management", "Research", "Reporting"]
-        marketing_skills = ["Digital Marketing", "Content Creation", "SEO", "Brand Management"]
-        healthcare_skills = ["Patient Care", "Clinical Procedures", "Medical Documentation"]
-        cluster_skills = []
-        if any(kw in title_lower for kw in ["developer", "engineer", "software", "it", "programmer"]):
-            cluster_skills = tech_skills
-        elif any(kw in title_lower for kw in ["analyst", "manager", "business", "consultant", "operations", "executive"]):
-            cluster_skills = business_skills
-        elif any(kw in title_lower for kw in ["marketing", "brand", "seo", "digital"]):
-            cluster_skills = marketing_skills
-        elif any(kw in title_lower for kw in ["doctor", "nurse", "medical", "health", "clinical"]):
-            cluster_skills = healthcare_skills
-        if experience_level == "Entry":
-            skills = entry_skills + cluster_skills[:3]
-        elif experience_level == "Mid":
-            skills = mid_skills + cluster_skills[:5]
-        else:
-            skills = senior_skills + cluster_skills
-        seen = set()
-        universal_skills = [s for s in skills if not (s in seen or seen.add(s))]
-        return universal_skills
+        tokens = set(title_lower.split())
+        for industry, keywords in industry_keywords.items():
+            if tokens.intersection(set(keywords)):
+                return industry
+
+        return "General Business & Services"
 
     def _build_prompt(self, params: JobParameters) -> str:
-        exp_level = self._get_experience_level(params.experience)
+        exp_level = self._get_experience_level(params.experience, params.job_title)
         industry = self._infer_industry(params.job_title)
         location = params.location_type
         required = params.required_skills
